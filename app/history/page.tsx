@@ -4,7 +4,7 @@ import { useEffect, useState, useMemo } from 'react'
 import Link from 'next/link'
 import { formatDistanceToNow } from 'date-fns'
 import { cn } from '@/lib/utils'
-import { getJobs, retryJob, deleteJob, modelOptions, type Job, type JobStatus, type DetectionResult } from '@/lib/api'
+import { getJobs, getJob, retryJob, deleteJob, modelOptions, type Job, type JobStatus, type DetectionResult } from '@/lib/api'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -69,6 +69,7 @@ function getResultBadge(result?: DetectionResult) {
 export default function HistoryPage() {
   const [jobs, setJobs] = useState<Job[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>('grid')
   const [currentPage, setCurrentPage] = useState(1)
 
@@ -78,17 +79,25 @@ export default function HistoryPage() {
   const [modelFilter, setModelFilter] = useState<string>('all')
 
   useEffect(() => {
-    async function loadJobs() {
+    async function loadJobs(showToastOnError: boolean) {
       try {
-        const data = await getJobs()
-        setJobs(data)
+        const cached = await getJobs()
+        await Promise.all(cached.map((job) => getJob(job.id).catch(() => null)))
+        const refreshed = await getJobs()
+        setJobs(refreshed)
+        setLastRefreshedAt(new Date())
       } catch (error) {
-        toast.error('Failed to load jobs')
+        if (showToastOnError) {
+          toast.error('Failed to load jobs')
+        }
       } finally {
         setIsLoading(false)
       }
     }
-    loadJobs()
+
+    loadJobs(true)
+    const interval = setInterval(() => loadJobs(false), 3000)
+    return () => clearInterval(interval)
   }, [])
 
   const filteredJobs = useMemo(() => {
@@ -146,6 +155,9 @@ export default function HistoryPage() {
           <h1 className="text-2xl font-bold text-text-primary">Detection History</h1>
           <p className="mt-1 text-text-secondary">
             View and manage all your detection jobs
+          </p>
+          <p className="mt-1 text-xs text-text-secondary">
+            Live sync {lastRefreshedAt ? `• updated ${formatDistanceToNow(lastRefreshedAt, { addSuffix: true })}` : ''}
           </p>
         </div>
         <Button asChild className="gap-2 bg-accent-cyan text-primary-foreground hover:bg-accent-cyan/90">

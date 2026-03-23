@@ -1,10 +1,10 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { format } from 'date-fns'
 import { cn } from '@/lib/utils'
-import { getJob, retryJob, type Job, type JobStatus, type DetectionResult } from '@/lib/api'
+import { analysisEngineInfo, getJob, retryJob, type Job, type JobStatus, type DetectionResult } from '@/lib/api'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
@@ -74,6 +74,20 @@ function getResultDisplay(result: DetectionResult) {
   }
 }
 
+function getConfidenceBand(score?: number) {
+  if (typeof score !== 'number') return { label: 'Unknown', tone: 'text-text-secondary' }
+  if (score >= 80) return { label: 'High confidence', tone: 'text-success' }
+  if (score >= 50) return { label: 'Medium confidence', tone: 'text-warning' }
+  return { label: 'Low confidence', tone: 'text-error' }
+}
+
+function formatSeconds(sec: number): string {
+  const total = Math.max(0, Math.round(sec))
+  const mins = Math.floor(total / 60)
+  const secs = total % 60
+  return `${mins}:${secs.toString().padStart(2, '0')}`
+}
+
 export default function JobDetailsPage() {
   const params = useParams()
   const router = useRouter()
@@ -81,6 +95,7 @@ export default function JobDetailsPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [isLogsOpen, setIsLogsOpen] = useState(false)
   const [isRetrying, setIsRetrying] = useState(false)
+  const resultVideoRef = useRef<HTMLVideoElement | null>(null)
 
   const jobId = params.id as string
 
@@ -146,6 +161,19 @@ export default function JobDetailsPage() {
 
   const currentStepIndex = getStepIndex(job.status)
   const resultDisplay = job.result ? getResultDisplay(job.result) : null
+  const elapsedMs = Math.max(0, Date.now() - new Date(job.createdAt).getTime())
+  const elapsedSec = Math.floor(elapsedMs / 1000)
+  const elapsedText = `${Math.floor(elapsedSec / 60)}m ${String(elapsedSec % 60).padStart(2, '0')}s`
+  const confidenceBand = getConfidenceBand(job.metrics?.facialConsistency)
+
+  const seekToWindow = (timeSec: number) => {
+    const player = resultVideoRef.current
+    if (!player) return
+    player.currentTime = Math.max(0, timeSec)
+    void player.play().catch(() => {
+      // Ignore autoplay/play promise issues; controls remain available.
+    })
+  }
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -203,6 +231,9 @@ export default function JobDetailsPage() {
                       {resultDisplay.label}
                     </h2>
                     <p className="mt-1 text-sm text-text-secondary">{resultDisplay.description}</p>
+                    <p className={cn('mt-1 text-xs font-medium', confidenceBand.tone)}>
+                      {confidenceBand.label}
+                    </p>
                     
                     {job.metrics && (
                       <div className="mt-4 grid grid-cols-2 gap-3">
@@ -223,6 +254,14 @@ export default function JobDetailsPage() {
                         </div>
                       </div>
                     )}
+                    <div className="mt-4 rounded-lg border border-border/60 bg-background/40 p-3">
+                      <p className="text-xs font-medium text-text-primary">Why this result</p>
+                      <ul className="mt-2 space-y-1 text-xs text-text-secondary">
+                        <li>Audio-visual sync score contributes to manipulation likelihood.</li>
+                        <li>Temporal and facial consistency are aggregated across windows.</li>
+                        <li>This output is an AI signal; treat as decision support.</li>
+                      </ul>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -250,6 +289,14 @@ export default function JobDetailsPage() {
             {/* Status Timeline */}
             <div className="rounded-2xl border border-border/50 bg-surface p-6">
               <h2 className="mb-6 text-lg font-semibold text-text-primary">Processing Status</h2>
+              <div className="mb-4 rounded-lg border border-border/60 bg-surface-2 p-3 text-xs text-text-secondary">
+                Elapsed time: <span className="font-medium text-text-primary">{elapsedText}</span>
+                {(job.status === 'processing' || job.status === 'analyzing') && (
+                  <>
+                    {' '}• ETA: <span className="font-medium text-text-primary">~1-3 min</span>
+                  </>
+                )}
+              </div>
               
               {job.status === 'failed' ? (
                 <div className="rounded-xl border border-error/30 bg-error/5 p-4">
@@ -387,6 +434,105 @@ export default function JobDetailsPage() {
                 </CollapsibleContent>
               </div>
             </Collapsible>
+
+            {/* Evidence panel */}
+            {job.status === 'completed' && (
+              <div className="rounded-2xl border border-border/50 bg-surface p-6">
+                <h2 className="mb-3 text-lg font-semibold text-text-primary">Evidence Summary</h2>
+                <p className="mb-3 text-xs text-text-secondary">
+                  Evidence is derived from model signals across the whole clip, not a single frame.
+                </p>
+                {job.metrics ? (
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <div className="rounded-lg border border-border/50 bg-surface-2 p-3">
+                      <p className="text-xs text-text-secondary">Manipulation Signal</p>
+                      <p className={cn(
+                        'mt-1 text-lg font-semibold',
+                        job.metrics.overallScore >= 70 ? 'text-error' :
+                        job.metrics.overallScore >= 40 ? 'text-warning' : 'text-success'
+                      )}>
+                        {job.metrics.overallScore}%
+                      </p>
+                      <p className="mt-1 text-xs text-text-secondary">
+                        Aggregate fake-likelihood from temporal windows.
+                      </p>
+                    </div>
+                    <div className="rounded-lg border border-border/50 bg-surface-2 p-3">
+                      <p className="text-xs text-text-secondary">AV Sync Quality</p>
+                      <p className="mt-1 text-lg font-semibold text-text-primary">{job.metrics.audioVisualSync}%</p>
+                      <p className="mt-1 text-xs text-text-secondary">
+                        Consistency between lip motion and speech dynamics.
+                      </p>
+                    </div>
+                    <div className="rounded-lg border border-border/50 bg-surface-2 p-3">
+                      <p className="text-xs text-text-secondary">Model Confidence</p>
+                      <p className="mt-1 text-lg font-semibold text-text-primary">{job.metrics.facialConsistency}%</p>
+                      <p className="mt-1 text-xs text-text-secondary">
+                        Confidence of facial-temporal inference output.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-border/50 bg-surface-2 p-4 text-sm text-text-secondary">
+                    No structured evidence payload is available for this run.
+                  </div>
+                )}
+                {job.dominantWindows && job.dominantWindows.length > 0 && (
+                  <div className="mt-4">
+                    <p className="mb-2 text-xs font-medium uppercase tracking-wide text-text-secondary">
+                      Most Fake-Dominant Windows
+                    </p>
+                    {job.localVideoUrl && (
+                      <div className="mb-3 overflow-hidden rounded-lg border border-border/60 bg-black">
+                        <video
+                          ref={resultVideoRef}
+                          src={job.localVideoUrl}
+                          controls
+                          preload="metadata"
+                          className="h-56 w-full object-contain md:h-72"
+                        />
+                      </div>
+                    )}
+                    <div className="space-y-2">
+                      {job.dominantWindows.map((window) => (
+                        <button
+                          key={window.windowIndex}
+                          type="button"
+                          onClick={() => seekToWindow(window.timeStartSec)}
+                          className="flex w-full items-center gap-3 rounded-lg border border-border/60 bg-surface-2 p-3 text-left transition-colors hover:border-accent-cyan/60 hover:bg-surface"
+                        >
+                          {window.imageDataUrl ? (
+                            <img
+                              src={window.imageDataUrl}
+                              alt={`Window ${window.windowIndex}`}
+                              className="h-14 w-20 rounded-md object-cover"
+                            />
+                          ) : (
+                            <div className="flex h-14 w-20 items-center justify-center rounded-md bg-background text-[10px] text-text-secondary">
+                              No frame
+                            </div>
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium text-text-primary">
+                              Window #{window.windowIndex} • {formatSeconds(window.timeStartSec)} - {formatSeconds(window.timeEndSec)}
+                            </p>
+                            <p className="text-xs text-text-secondary">
+                              Fake confidence: <span className="font-medium text-error">{window.fakeConfidence}%</span>
+                              {typeof window.speakingActivity === 'number' ? ` • speaking ${Math.round(window.speakingActivity * 100)}%` : ''}
+                            </p>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                    {!job.localVideoUrl && (
+                      <p className="mt-2 text-xs text-text-secondary">
+                        Video playback is available for clips uploaded in this browser session.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Sidebar - Job Metadata */}
@@ -401,6 +547,16 @@ export default function JobDetailsPage() {
                 <div>
                   <dt className="text-xs font-medium uppercase text-text-secondary">Model</dt>
                   <dd className="mt-1 text-sm text-text-primary">{job.model}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-medium uppercase text-text-secondary">Engine</dt>
+                  <dd className="mt-1 text-sm text-text-primary">
+                    {analysisEngineInfo.name} {analysisEngineInfo.version}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-medium uppercase text-text-secondary">Calibration</dt>
+                  <dd className="mt-1 text-sm text-text-primary">{analysisEngineInfo.calibration}</dd>
                 </div>
                 <div>
                   <dt className="text-xs font-medium uppercase text-text-secondary">Sensitivity</dt>

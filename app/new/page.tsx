@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils'
 import { createJob, modelOptions, sensitivityOptions } from '@/lib/api'
 import { FileDropzone } from '@/components/file-dropzone'
 import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
 import {
   Select,
@@ -41,6 +42,7 @@ export default function NewJobPage() {
   const [videoFile, setVideoFile] = useState<File | null>(null)
   const [model, setModel] = useState('lipsync-detector-v2')
   const [sensitivity, setSensitivity] = useState<'low' | 'medium' | 'high'>('medium')
+  const [includeDebug, setIncludeDebug] = useState(true)
 
   const canProceed = (step: Step): boolean => {
     switch (step) {
@@ -76,6 +78,7 @@ export default function NewJobPage() {
         videoFile,
         model,
         sensitivity,
+        includeDebug,
       })
       toast.success('Detection job created successfully!')
       router.push(`/jobs/${job.id}`)
@@ -267,6 +270,25 @@ export default function NewJobPage() {
                 </div>
 
                 {/* Info Box with Visual */}
+                <div className="rounded-lg border border-border/50 bg-surface-2 p-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <Label htmlFor="include-debug" className="text-sm font-medium text-text-primary">
+                        Include Debug Data
+                      </Label>
+                      <p className="mt-1 text-xs text-text-secondary">
+                        Sends `include_debug` when reading backend results. Keep ON for richer diagnostics.
+                      </p>
+                    </div>
+                    <Switch
+                      id="include-debug"
+                      checked={includeDebug}
+                      onCheckedChange={setIncludeDebug}
+                    />
+                  </div>
+                </div>
+
+                {/* Info Box with Visual */}
                 <div className="relative overflow-hidden rounded-lg border border-accent-violet/20 bg-accent-violet/5 p-4">
                   <div className="relative z-10">
                     <h3 className="text-sm font-medium text-text-primary">How Detection Works</h3>
@@ -319,6 +341,10 @@ export default function NewJobPage() {
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-text-secondary">Sensitivity</span>
                   <span className="text-sm font-medium text-text-primary capitalize">{sensitivity}</span>
+                </div>
+                <div className="flex items-center justify-between border-t border-border/50 pt-4">
+                  <span className="text-sm text-text-secondary">Include Debug Data</span>
+                  <span className="text-sm font-medium text-text-primary">{includeDebug ? 'Enabled' : 'Disabled'}</span>
                 </div>
               </div>
 

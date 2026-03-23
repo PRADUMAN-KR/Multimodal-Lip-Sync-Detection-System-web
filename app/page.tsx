@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { getJobs, getJobStats, retryJob, deleteJob, type Job, type JobStats } from '@/lib/api'
+import { getJobs, getJob, getJobStats, retryJob, deleteJob, type Job, type JobStats } from '@/lib/api'
 import { StatsCard } from '@/components/stats-card'
 import { JobsTable } from '@/components/jobs-table'
 import { Button } from '@/components/ui/button'
@@ -13,23 +13,37 @@ export default function DashboardPage() {
   const [jobs, setJobs] = useState<Job[]>([])
   const [stats, setStats] = useState<JobStats | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null)
 
   useEffect(() => {
-    async function loadData() {
+    async function loadData(showToastOnError: boolean) {
       try {
+        // Refresh each cached job from backend so dashboard status/cards stay up to date.
+        const cachedJobs = await getJobs()
+        await Promise.all(cachedJobs.map((job) => getJob(job.id).catch(() => null)))
+
         const [jobsData, statsData] = await Promise.all([
           getJobs(),
           getJobStats(),
         ])
         setJobs(jobsData)
         setStats(statsData)
+        setLastRefreshedAt(new Date())
       } catch (error) {
-        toast.error('Failed to load dashboard data')
+        if (showToastOnError) {
+          toast.error('Failed to load dashboard data')
+        }
       } finally {
         setIsLoading(false)
       }
     }
-    loadData()
+
+    loadData(true)
+    const interval = setInterval(() => {
+      loadData(false)
+    }, 2000)
+
+    return () => clearInterval(interval)
   }, [])
 
   const handleRetry = async (id: string) => {
@@ -93,6 +107,9 @@ export default function DashboardPage() {
             </h1>
             <p className="mt-2 text-text-secondary">
               Detect lip-sync manipulation and deepfake content in videos using advanced AI analysis. Get instant results with confidence scores.
+            </p>
+            <p className="mt-2 text-xs text-text-secondary">
+              Live status sync {lastRefreshedAt ? `• updated ${lastRefreshedAt.toLocaleTimeString()}` : ''}
             </p>
           </div>
           <Button
